@@ -93,5 +93,5 @@ app.include_router(
 async def health():
     return {
         "status": "ok",
-        "service": "iconinvest-fastapi",
+        "service": "tricontrade-fastapi",
     }
