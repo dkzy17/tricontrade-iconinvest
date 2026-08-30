@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -13,14 +14,14 @@ from app.models.collections import User
 
 ADMINS = [
     {
-        "email": "admin@icon.com",
-        "password": "!Icon9197;",
+        "email": "admin@tricontrade.com",
+        "password": os.getenv("TRICONTRADE_ADMIN_PASSWORD"),
         "f_name": "Admin",
         "l_name": "One",
     },
     {
-        "email": "super@icon.com",
-        "password": "!Super9197;",
+        "email": "super@tricontrade.com",
+        "password": os.getenv("TRICONTRADE_SUPERADMIN_PASSWORD"),
         "f_name": "Admin",
         "l_name": "Two",
     },
@@ -28,53 +29,61 @@ ADMINS = [
 
 
 async def main():
-    await connect_db()
-
-    async with SessionLocal() as db:
-        for admin in ADMINS:
-            email = admin["email"].lower()
-
-            result = await db.execute(
-                select(User).where(User.email == email)
+    for admin in ADMINS:
+        if not admin["password"]:
+            raise RuntimeError(
+                f"Missing password environment variable for {admin['email']}"
             )
 
-            existing = result.scalar_one_or_none()
+    await connect_db()
 
-            if existing:
-                existing.role = "admin"
-                existing.verified = True
-                existing.password = hash_password(admin["password"])
+    try:
+        async with SessionLocal() as db:
+            for admin in ADMINS:
+                email = admin["email"].lower()
 
-                print(f"Updated existing admin: {email}")
-
-            else:
-                user = User(
-                    email=email,
-                    password=hash_password(admin["password"]),
-                    f_name=admin["f_name"],
-                    l_name=admin["l_name"],
-                    phone="",
-                    country="",
-                    balance=0,
-                    profit=0,
-                    deposit_balance=0,
-                    referral_balance=0,
-                    withdraw_balance=0,
-                    invest_balance=0,
-                    currency="usd",
-                    verified=True,
-                    role="admin",
-                    referral_id=None,
-                    referrer_id=None,
+                result = await db.execute(
+                    select(User).where(User.email == email)
                 )
 
-                db.add(user)
+                existing = result.scalar_one_or_none()
 
-                print(f"Created admin: {email}")
+                if existing:
+                    existing.role = "admin"
+                    existing.verified = True
+                    existing.password = hash_password(admin["password"])
 
-        await db.commit()
+                    print(f"Updated existing admin: {email}")
 
-    await close_db()
+                else:
+                    user = User(
+                        email=email,
+                        password=hash_password(admin["password"]),
+                        f_name=admin["f_name"],
+                        l_name=admin["l_name"],
+                        phone="",
+                        country="Nigeria",
+                        balance=0,
+                        profit=0,
+                        deposit_balance=0,
+                        referral_balance=0,
+                        withdraw_balance=0,
+                        invest_balance=0,
+                        currency="usd",
+                        verified=True,
+                        role="admin",
+                        referral_id=None,
+                        referrer_id=None,
+                    )
+
+                    db.add(user)
+
+                    print(f"Created admin: {email}")
+
+            await db.commit()
+
+    finally:
+        await close_db()
 
 
 if __name__ == "__main__":
