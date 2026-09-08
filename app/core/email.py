@@ -154,3 +154,245 @@ async def send_otp_email(
     }
 
     return await resend.Emails.send_async(params)
+
+
+
+
+
+
+from html import escape
+from datetime import datetime, timezone
+
+
+def render_admin_email(
+    receiver_name: str,
+    subject: str,
+    body: str,
+    cta_label: str | None = None,
+    cta_url: str | None = None,
+) -> str:
+    current_year = datetime.now(timezone.utc).year
+
+    safe_receiver_name = escape(receiver_name or "Customer")
+    safe_subject = escape(subject)
+    safe_body = escape(body).replace("\n", "<br>")
+    safe_cta_label = escape(cta_label) if cta_label else ""
+    safe_cta_url = escape(cta_url) if cta_url else ""
+
+    cta_block = ""
+
+    if cta_label and cta_url:
+        cta_block = f"""
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr>
+            <td style="padding:28px 32px 36px;" align="center">
+              <!--[if mso]>
+              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml"
+                href="{safe_cta_url}"
+                style="height:48px;v-text-anchor:middle;width:100%;"
+                arcsize="16%"
+                fillcolor="#1b2e4b"
+                stroke="f">
+                <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">
+                  {safe_cta_label}
+                </center>
+              </v:roundrect>
+              <![endif]-->
+
+              <!--[if !mso]><!-->
+              <a
+                href="{safe_cta_url}"
+                style="
+                  display:block;
+                  background:#1b2e4b;
+                  color:#ffffff;
+                  font-size:14px;
+                  font-weight:600;
+                  text-decoration:none;
+                  padding:14px 24px;
+                  border-radius:8px;
+                  text-align:center;
+                  letter-spacing:.2px;
+                ">
+                {safe_cta_label}
+              </a>
+              <!--<![endif]-->
+            </td>
+          </tr>
+        </table>
+        """
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{safe_subject}</title>
+
+  <style>
+    * {{
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }}
+
+    body {{
+      background-color: #f5f6fa;
+    }}
+  </style>
+</head>
+
+<body style="
+  background-color:#f5f6fa;
+  padding:40px 16px;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+">
+
+  <div style="
+    display:none;
+    max-height:0;
+    overflow:hidden;
+    font-size:1px;
+    color:transparent;
+  ">
+    {safe_subject}
+  </div>
+
+  <table
+    align="center"
+    width="100%"
+    cellpadding="0"
+    cellspacing="0"
+    role="presentation"
+    style="max-width:460px;margin:0 auto;"
+  >
+
+    <tr>
+      <td style="
+        background:#ffffff;
+        border-radius:12px;
+        overflow:hidden;
+      ">
+
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+          style="background:#1b2e4b;">
+          <tr>
+            <td style="padding:22px 28px;">
+              <span style="
+                font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+                font-size:17px;
+                color:#ffffff;
+                letter-spacing:-.2px;
+                font-weight:700;
+              ">
+                Tricontrade
+              </span>
+            </td>
+          </tr>
+        </table>
+
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr>
+            <td style="padding:36px 32px 0;">
+
+              <p style="
+                font-size:14px;
+                color:#4a4a4a;
+                line-height:1.65;
+                margin:0;
+              ">
+                Dear {safe_receiver_name},
+              </p>
+
+              <p style="
+                margin:14px 0 0;
+                font-size:14px;
+                color:#4a4a4a;
+                line-height:1.65;
+              ">
+                {safe_body}
+              </p>
+
+            </td>
+          </tr>
+        </table>
+
+        {cta_block}
+
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+          <tr>
+            <td style="padding:0 32px;">
+              <div style="border-top:1px solid #ebe8e4;"></div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:20px 32px 24px;">
+              <p style="
+                font-size:13px;
+                color:#4a4a4a;
+                line-height:1.5;
+                margin:0;
+              ">
+                Thank you,<br>
+                <span style="font-weight:600;color:#1e1e2d;">
+                  The Tricontrade Team
+                </span>
+              </p>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+
+    <tr>
+      <td style="padding:28px 4px 0;text-align:center;">
+
+        <p style="
+          font-size:11px;
+          color:#b0b0b0;
+          line-height:1.7;
+          margin:0;
+        ">
+          &copy; {current_year} Tricontrade. All rights reserved.
+        </p>
+
+        <p style="
+          font-size:11px;
+          color:#b0b0b0;
+          margin:6px 0 0;
+        ">
+          <a
+            href="https://tricontrade.com/unsubscribe"
+            style="
+              color:#b0b0b0;
+              text-decoration:underline;
+            ">
+            Unsubscribe
+          </a>
+        </p>
+
+      </td>
+    </tr>
+
+  </table>
+
+</body>
+</html>
+"""
+
+
+async def send_admin_email(
+    email: str,
+    subject: str,
+    html: str,
+):
+    params: resend.Emails.SendParams = {
+        "from": settings.from_email,
+        "to": [email],
+        "subject": subject,
+        "html": html,
+    }
+
+    return await resend.Emails.send_async(params)

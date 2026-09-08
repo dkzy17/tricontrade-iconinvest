@@ -243,7 +243,7 @@ async def approve_deposit(
 
     transaction_result = await db.execute(
         select(Transaction).where(
-            Transaction.reference == str(deposit.id),
+            Transaction.reference == f"deposit:{deposit.id}",
             Transaction.type == "deposit",
         )
     )
@@ -323,7 +323,7 @@ async def reject_deposit(
 
     transaction_result = await db.execute(
         select(Transaction).where(
-            Transaction.reference == str(deposit.id),
+            Transaction.reference == f"deposit:{deposit.id}",
             Transaction.type == "deposit",
         )
     )
@@ -438,7 +438,7 @@ async def approve_withdrawal(
 
     transaction_result = await db.execute(
         select(Transaction).where(
-            Transaction.reference == str(withdrawal.id),
+            Transaction.reference == f"withdrawal:{withdrawal.id}",
             Transaction.type == "withdrawal",
         )
     )
@@ -521,7 +521,7 @@ async def reject_withdrawal(
 
     transaction_result = await db.execute(
         select(Transaction).where(
-            Transaction.reference == str(withdrawal.id),
+            Transaction.reference == f"withdrawal:{withdrawal.id}",
             Transaction.type == "withdrawal",
         )
     )
@@ -554,4 +554,236 @@ async def reject_withdrawal(
         "withdrawalId": str(withdrawal.id),
         "amount": float(withdrawal.amount),
         "userId": str(user.id),
+    }
+
+# =========================================================
+# ADMIN EMAIL
+# =========================================================
+
+from datetime import datetime, timedelta, timezone
+from fastapi import HTTPException
+from sqlalchemy import select
+
+from app.core.email import render_admin_email, send_admin_email
+from app.models.collections import Email as EmailRecord, User as EmailUser
+from app.schemas.email import (
+    ALLOWED_TEMPLATE_IDS,
+    BroadcastEmailIn,
+    SendEmailIn,
+)
+
+
+BROADCAST_COOLDOWN = timedelta(hours=1)
+_last_broadcast_at: datetime | None = None
+
+
+def _validate_email_template(template_id: str | None) -> None:
+    if template_id is not None and template_id not in ALLOWED_TEMPLATE_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid templateId",
+        )
+
+
+def _receiver_name(user) -> str:
+    full_name = " ".join(
+        part for part in [user.f_name, user.l_name]
+        if part
+    ).strip()
+
+    return full_name or user.email.split("@", 1)[0]
+
+
+async def _deliver_and_build_record(
+    *,
+    recipient,
+    subject: str,
+    body: str,
+    cta_label: str | None,
+    cta_url: str | None,
+    template_id: str | None,
+    admin_id: int,
+):
+    html = render_admin_email(
+        receiver_name=_receiver_name(recipient),
+        subject=subject,
+        body=body,
+        cta_label=cta_label,
+        cta_url=cta_url,
+    )
+
+    result = await send_admin_email(
+        recipient.email,
+        subject,
+        html,
+    )
+
+    email_id = None
+
+    if isinstance(result, dict):
+        email_id = result.get("id")
+
+    if not email_id:
+        raise RuntimeError(
+            "Email provider did not return an email ID"
+        )
+
+    record = EmailRecord(
+        user_id=recipient.id,
+        subject=subject,
+        body=body,
+        cta_label=cta_label,
+        cta_url=cta_url,
+        template_id=template_id,
+        read=False,
+        sent_at=datetime.now(timezone.utc),
+        sent_by=admin_id,
+        email_id=email_id,
+    )
+
+    return email_id, record
+
+
+@router.post("/email/send")
+async def admin_send_email(
+    data: SendEmailIn,
+    admin=Depends(admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _validate_email_template(data.templateId)
+
+    result = await db.execute(
+        select(EmailUser).where(EmailUser.id == data.userId)
+    )
+
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found",
+        )
+
+    subject = data.subject.strip()
+    body = data.body.strip()
+
+    if not subject or not body:
+        raise HTTPException(
+            status_code=400,
+            detail="Subject and body are required",
+        )
+
+    try:
+        email_id, record = await _deliver_and_build_record(
+            recipient=user,
+            subject=subject,
+            body=body,
+            cta_label=data.cta.label if data.cta else None,
+            cta_url=str(data.cta.url) if data.cta else None,
+            template_id=data.templateId,
+            admin_id=admin.id,
+        )
+
+        db.add(record)
+        await db.commit()
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Email delivery failed: {exc}",
+        ) from exc
+
+    return {
+        "msg": "Email sent",
+        "emailId": email_id,
+    }
+
+
+@router.post("/email/broadcast")
+async def admin_broadcast_email(
+    data: BroadcastEmailIn,
+    admin=Depends(admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    global _last_broadcast_at
+
+    _validate_email_template(data.templateId)
+
+    subject = data.subject.strip()
+    body = data.body.strip()
+
+    if not subject or not body:
+        raise HTTPException(
+            status_code=400,
+            detail="Subject and body are required",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    if (
+        _last_broadcast_at is not None
+        and now - _last_broadcast_at < BROADCAST_COOLDOWN
+    ):
+        remaining = BROADCAST_COOLDOWN - (
+            now - _last_broadcast_at
+        )
+
+        retry_after = max(
+            1,
+            int(remaining.total_seconds()),
+        )
+
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Broadcast cooldown active. "
+                f"Try again in {retry_after} seconds."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    result = await db.execute(
+        select(EmailUser)
+        .where(EmailUser.verified.is_(True), EmailUser.role == "user")
+        .order_by(EmailUser.id.asc())
+    )
+
+    users = result.scalars().all()
+
+    cta_label = data.cta.label if data.cta else None
+    cta_url = str(data.cta.url) if data.cta else None
+
+    sent_count = 0
+
+    for user in users:
+        try:
+            _, record = await _deliver_and_build_record(
+                recipient=user,
+                subject=subject,
+                body=body,
+                cta_label=cta_label,
+                cta_url=cta_url,
+                template_id=data.templateId,
+                admin_id=admin.id,
+            )
+
+            db.add(record)
+            sent_count += 1
+
+        except Exception:
+            # Continue sending to other recipients.
+            # Failed individual sends are not allowed to stop
+            # the entire broadcast.
+            await db.rollback()
+
+    await db.commit()
+    _last_broadcast_at = now
+
+    return {
+        "msg": "Broadcast queued",
+        "recipientCount": sent_count,
     }

@@ -40,6 +40,7 @@ def public_user(user: User) -> dict:
         "investBalance": float(user.invest_balance),
         "currency": user.currency,
         "verified": user.verified,
+        "suspended": user.suspended,
         "role": user.role,
         "referralId": user.referral_id,
         "referrerId": user.referrer_id,
@@ -188,6 +189,12 @@ async def signin(
         raise HTTPException(
             status_code=401,
             detail="Invalid email or password",
+        )
+
+    if user.suspended:
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been suspended",
         )
 
     # Do not allow unverified users into the application.

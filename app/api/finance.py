@@ -2,7 +2,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import current_user
@@ -43,12 +43,38 @@ def serialize_deposit(d: Deposit):
 
 
 def serialize_investment(i: Investment):
+    amount = money(i.amount)
+    rate = money(i.rate)
+
+    base_profit = (
+        amount
+        * rate
+        / Decimal("100")
+    ).quantize(Decimal("0.01"))
+
+    additional_profit = money(
+        i.additional_profit
+    )
+
+    total_profit = (
+        base_profit + additional_profit
+    ).quantize(Decimal("0.01"))
+
+    effective_roi = Decimal("0")
+
+    if amount > 0:
+        effective_roi = (
+            total_profit
+            / amount
+            * Decimal("100")
+        ).quantize(Decimal("0.01"))
+
     return {
         "_id": str(i.id),
         "owner": str(i.owner),
-        "amount": float(i.amount),
+        "amount": float(amount),
         "profit": float(i.profit),
-        "rate": float(i.rate),
+        "rate": float(rate),
         "name": i.name,
         "date": i.date.isoformat(),
         "maturity_date": (
@@ -56,6 +82,16 @@ def serialize_investment(i: Investment):
             if i.maturity_date
             else None
         ),
+        "additionalProfit": float(additional_profit),
+        "baseProfit": float(base_profit),
+        "totalProfit": float(total_profit),
+        "effectiveRoi": float(effective_roi),
+        "pausedAt": (
+            i.paused_at.isoformat()
+            if i.paused_at
+            else None
+        ),
+        "totalPausedSeconds": i.total_paused_seconds,
         "withdrawaled": i.withdrawaled,
         "status": i.status,
     }
@@ -114,7 +150,7 @@ async def create_deposit(
         status="pending",
         details="Deposit awaiting payment verification",
         date=datetime.now(timezone.utc),
-        reference=str(deposit.id),
+        reference=f"deposit:{deposit.id}",
     )
 
     db.add(transaction)
@@ -156,7 +192,7 @@ async def new_investment(
 
     result = await db.execute(
         select(Plan).where(
-            Plan.name == data.name,
+            func.lower(func.trim(Plan.name)) == func.lower(func.trim(data.name)),
             Plan.is_active.is_(True),
         )
     )
@@ -179,21 +215,25 @@ async def new_investment(
 
     duration_text = plan.w_date.lower().strip()
 
-    if "day" in duration_text:
-        try:
-            days = int(duration_text.split()[0])
-        except (ValueError, IndexError):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid investment plan duration",
-            )
+    try:
+        value = int(duration_text.split()[0])
+    except (ValueError, IndexError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid investment plan duration",
+        )
 
-        maturity_date = investment_date + timedelta(days=days)
+    if "day" in duration_text:
+        days = value
+    elif "month" in duration_text:
+        days = value * 30
     else:
         raise HTTPException(
             status_code=400,
             detail="Invalid investment plan duration",
         )
+
+    maturity_date = investment_date + timedelta(days=days)
 
     user.balance -= amount
     user.invest_balance += amount
@@ -220,7 +260,7 @@ async def new_investment(
         status="completed",
         details=f"Investment in {plan.name}",
         date=investment_date,
-        reference=str(investment.id),
+        reference=f"investment:{investment.id}",
     )
 
     db.add(transaction)
@@ -241,7 +281,7 @@ async def new_investment(
 
     return {
         "status": "success",
-        "msg": "Investment created",
+        "msg": "Investment created successfully",
         "investmentId": str(investment.id),
     }
 
@@ -303,6 +343,12 @@ async def claim_investment(
             "msg": "Investment has already been claimed",
         }
 
+    if investment.status.lower() == "paused":
+        return {
+            "status": "err",
+            "msg": "Investment is currently paused",
+        }
+
     if investment.maturity_date is None:
         return {
             "status": "err",
@@ -320,11 +366,19 @@ async def claim_investment(
 
     principal = money(investment.amount)
 
-    profit = (
+    base_profit = (
         principal
         * money(investment.rate)
         / Decimal("100")
     )
+
+    additional_profit = money(
+        investment.additional_profit
+    )
+
+    profit = (
+        base_profit + additional_profit
+    ).quantize(Decimal("0.01"))
 
     total = principal + profit
 
@@ -343,7 +397,7 @@ async def claim_investment(
         status="completed",
         details=f"Investment #{investment.id} matured",
         date=now,
-        reference=str(investment.id),
+        reference=f"investment_profit:{investment.id}",
     )
 
     db.add(transaction)
@@ -465,7 +519,7 @@ async def withdraw(
             f"to {data.address}"
         ),
         date=datetime.now(timezone.utc),
-        reference=str(withdrawal.id),
+        reference=f"withdrawal:{withdrawal.id}",
     )
 
     db.add(transaction)

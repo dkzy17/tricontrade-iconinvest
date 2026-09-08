@@ -85,6 +85,13 @@ class User(Base):
         nullable=False,
     )
 
+    suspended: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        index=True,
+    )
+
     role: Mapped[str] = mapped_column(
         String(20),
         default="user",
@@ -274,6 +281,12 @@ class Investment(Base):
         nullable=False,
     )
 
+    additional_profit: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2),
+        default=0,
+        nullable=False,
+    )
+
     rate: Mapped[Decimal] = mapped_column(
         Numeric(10, 4),
         default=0,
@@ -296,6 +309,17 @@ class Investment(Base):
         nullable=True,
     )
 
+    paused_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    total_paused_seconds: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
     withdrawaled: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -309,6 +333,58 @@ class Investment(Base):
         nullable=False,
     )
 
+
+
+class InvestmentAdminAction(Base):
+    __tablename__ = "investment_admin_actions"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    investment_id: Mapped[int] = mapped_column(
+        ForeignKey("investments.id"),
+        index=True,
+        nullable=False,
+    )
+
+    admin_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        index=True,
+        nullable=False,
+    )
+
+    action: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2),
+        nullable=True,
+    )
+
+    previous_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2),
+        nullable=True,
+    )
+
+    new_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2),
+        nullable=True,
+    )
+
+    reason: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
 
 class Withdrawal(Base):
@@ -485,4 +561,70 @@ class Notification(Base):
     read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+
+
+class Email(Base):
+    __tablename__ = "emails"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        index=True,
+        nullable=False,
+    )
+
+    subject: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    body: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    cta_label: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    cta_url: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    template_id: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    read: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        index=True,
+    )
+
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    sent_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+
+    email_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
     )

@@ -11,6 +11,8 @@ from app.api import (
     wallets,
     admin,
     admin_auth,
+    admin_users,
+    admin_investments,
     notifications,
 )
 
@@ -80,6 +82,14 @@ app.include_router(
     admin_auth.router,
     prefix="/api/v1/admin/auth",
     tags=["Admin Authentication"],
+)
+
+app.include_router(
+    admin_users.router,
+)
+
+app.include_router(
+    admin_investments.router,
 )
 
 app.include_router(

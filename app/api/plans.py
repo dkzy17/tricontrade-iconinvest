@@ -89,8 +89,8 @@ async def create_plan(
         minimum=Decimal(str(data.minimum)),
         maximun=Decimal(str(data.maximun)),
         percentage=Decimal(str(data.percentage)),
-        w_date=data.wDate,
-        is_active=data.isActive,
+        w_date=data.duration,
+        is_active=data.active,
         created_at=now,
         updated_at=now,
     )
@@ -129,8 +129,8 @@ async def update_plan(
     plan.minimum = Decimal(str(data.minimum))
     plan.maximun = Decimal(str(data.maximun))
     plan.percentage = Decimal(str(data.percentage))
-    plan.w_date = data.wDate
-    plan.is_active = data.isActive
+    plan.w_date = data.duration
+    plan.is_active = data.active
     plan.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
