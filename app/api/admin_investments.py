@@ -367,7 +367,7 @@ async def resume_investment(
 
     return {
         "status": "success",
-        "msg": "Investment resumed successfully",
+        "msg": "Investment resumed",
         "investment": serialize_admin_investment(investment),
         "pausedSeconds": paused_seconds,
         "reason": body.reason,
