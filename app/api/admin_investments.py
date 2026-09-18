@@ -5,6 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.investment_accrual import (
+    preview_accrual,
+    settle_accrual,
+)
+
 from app.api.dependencies import admin_user
 from app.core.database import get_db
 from app.models.collections import (
@@ -33,26 +38,36 @@ def serialize_admin_investment(
     investment: Investment,
     user: User | None = None,
 ) -> dict:
+    state = preview_accrual(investment)
+
     amount = money(investment.amount)
     rate = money(investment.rate)
-
-    base_profit = (
-        amount * rate / Decimal("100")
-    ).quantize(Decimal("0.01"))
-
-    additional_profit = money(
-        investment.additional_profit
-    )
-
-    total_profit = (
-        base_profit + additional_profit
-    ).quantize(Decimal("0.01"))
 
     effective_roi = Decimal("0")
 
     if amount > 0:
         effective_roi = (
-            total_profit / amount * Decimal("100")
+            state.expected_profit
+            / amount
+            * Decimal("100")
+        ).quantize(Decimal("0.01"))
+
+    remaining_periods = max(
+        0,
+        state.total_periods - state.completed_periods,
+    )
+
+    remaining_profit = max(
+        Decimal("0.00"),
+        state.expected_profit - state.accrued_profit,
+    )
+
+    accrual_per_period = Decimal("0.00")
+
+    if remaining_periods > 0:
+        accrual_per_period = (
+            remaining_profit
+            / Decimal(remaining_periods)
         ).quantize(Decimal("0.01"))
 
     result = {
@@ -60,24 +75,65 @@ def serialize_admin_investment(
         "owner": str(investment.owner),
         "amount": float(amount),
         "rate": float(rate),
-        "baseProfit": float(base_profit),
-        "additionalProfit": float(additional_profit),
-        "totalProfit": float(total_profit),
+
+        "baseProfit": float(state.base_profit),
+        "additionalProfit": float(
+            money(investment.additional_profit)
+        ),
+        "totalProfit": float(
+            state.expected_profit
+        ),
         "effectiveRoi": float(effective_roi),
-        "name": investment.name.strip() if investment.name else investment.name,
+
+        # 6-hour accumulation
+        "accruedProfit": float(
+            state.accrued_profit
+        ),
+        "withdrawableProfit": float(
+            state.withdrawable_profit
+        ),
+        "withdrawableAmount": float(
+            state.withdrawable_amount
+        ),
+        "completedAccrualPeriods": (
+            state.completed_periods
+        ),
+        "totalAccrualPeriods": (
+            state.total_periods
+        ),
+        "accrualIntervalHours": 6,
+        "accrualPerPeriod": float(
+            accrual_per_period
+        ),
+        "nextAccrualAt": (
+            state.next_accrual_at.isoformat()
+            if state.next_accrual_at
+            else None
+        ),
+
+        "name": (
+            investment.name.strip()
+            if investment.name
+            else investment.name
+        ),
         "date": (
             investment.date.isoformat()
-            if investment.date else None
+            if investment.date
+            else None
         ),
         "maturityDate": (
             investment.maturity_date.isoformat()
-            if investment.maturity_date else None
+            if investment.maturity_date
+            else None
         ),
         "pausedAt": (
             investment.paused_at.isoformat()
-            if investment.paused_at else None
+            if investment.paused_at
+            else None
         ),
-        "totalPausedSeconds": investment.total_paused_seconds,
+        "totalPausedSeconds": (
+            investment.total_paused_seconds
+        ),
         "withdrawaled": investment.withdrawaled,
         "status": investment.status,
     }
@@ -172,6 +228,7 @@ async def admin_investment_detail(
     }
 
 
+
 @router.post("/{investment_id}/roi-adjustment")
 async def adjust_investment_roi(
     investment_id: int,
@@ -198,6 +255,15 @@ async def adjust_investment_roi(
             detail="Adjustment amount cannot be zero",
         )
 
+    now = datetime.now(timezone.utc)
+
+    # Lock in everything that has already accumulated
+    # before changing the expected final profit.
+    accrual_state = settle_accrual(
+        investment,
+        now,
+    )
+
     current_additional = money(
         investment.additional_profit
     )
@@ -212,10 +278,21 @@ async def adjust_investment_roi(
         / Decimal("100")
     ).quantize(Decimal("0.01"))
 
-    if base_profit + new_additional < 0:
+    new_expected_profit = (
+        base_profit + new_additional
+    ).quantize(Decimal("0.01"))
+
+    # Never allow the expected final profit to be reduced
+    # below the profit that has already accumulated.
+    if new_expected_profit < accrual_state.accrued_profit:
+        await db.rollback()
+
         raise HTTPException(
             status_code=400,
-            detail="Adjustment would make total profit negative",
+            detail=(
+                "Adjustment would reduce expected profit "
+                "below already accumulated profit"
+            ),
         )
 
     investment.additional_profit = new_additional
@@ -228,7 +305,7 @@ async def adjust_investment_roi(
         previous_value=current_additional,
         new_value=new_additional,
         reason=body.reason,
-        created_at=datetime.now(timezone.utc),
+        created_at=now,
     )
 
     db.add(audit)
@@ -236,7 +313,9 @@ async def adjust_investment_roi(
     await db.commit()
     await db.refresh(investment)
 
-    updated = serialize_admin_investment(investment)
+    updated = serialize_admin_investment(
+        investment
+    )
 
     return {
         "status": "success",
@@ -244,6 +323,8 @@ async def adjust_investment_roi(
         "investment": updated,
         "reason": body.reason,
     }
+
+
 
 
 @router.post("/{investment_id}/pause")
@@ -272,6 +353,14 @@ async def pause_investment(
 
     now = datetime.now(timezone.utc)
 
+    # Settle all completed 6-hour accrual periods
+    # before starting the pause.
+    settle_accrual(
+        investment,
+        now,
+    )
+
+    # Pause begins after the accrual checkpoint.
     investment.status = "Paused"
     investment.paused_at = now
 
@@ -293,9 +382,12 @@ async def pause_investment(
     return {
         "status": "success",
         "msg": "Investment paused successfully",
-        "investment": serialize_admin_investment(investment),
+        "investment": serialize_admin_investment(
+            investment
+        ),
         "reason": body.reason,
     }
+
 
 
 @router.post("/{investment_id}/resume")
@@ -330,6 +422,13 @@ async def resume_investment(
 
     now = datetime.now(timezone.utc)
 
+    # Persist any completed 6-hour accrual periods
+    # reached before the investment is resumed.
+    settle_accrual(
+        investment,
+        now,
+    )
+
     paused_seconds = max(
         0,
         int(
@@ -339,13 +438,18 @@ async def resume_investment(
         ),
     )
 
+    # Add the paused time to the investment's
+    # total paused duration.
     investment.total_paused_seconds += paused_seconds
 
+    # Extend maturity by exactly the time the
+    # investment was paused.
     if investment.maturity_date is not None:
         investment.maturity_date += timedelta(
             seconds=paused_seconds
         )
 
+    # Resume the investment.
     investment.paused_at = None
     investment.status = "Active"
 
@@ -368,7 +472,9 @@ async def resume_investment(
     return {
         "status": "success",
         "msg": "Investment resumed",
-        "investment": serialize_admin_investment(investment),
+        "investment": serialize_admin_investment(
+            investment
+        ),
         "pausedSeconds": paused_seconds,
         "reason": body.reason,
     }

@@ -8,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import current_user
 from app.api.notifications import create_notification
 from app.core.database import get_db
+from app.core.investment_accrual import (
+    preview_accrual,
+    settle_accrual,
+)
+
 from app.models.collections import (
     User,
     Plan,
@@ -42,59 +47,116 @@ def serialize_deposit(d: Deposit):
     }
 
 
+
+
 def serialize_investment(i: Investment):
+    state = preview_accrual(i)
+
     amount = money(i.amount)
     rate = money(i.rate)
 
-    base_profit = (
-        amount
-        * rate
-        / Decimal("100")
-    ).quantize(Decimal("0.01"))
-
-    additional_profit = money(
-        i.additional_profit
-    )
-
-    total_profit = (
-        base_profit + additional_profit
-    ).quantize(Decimal("0.01"))
-
-    effective_roi = Decimal("0")
+    effective_roi = Decimal("0.00")
 
     if amount > 0:
         effective_roi = (
-            total_profit
+            state.expected_profit
             / amount
             * Decimal("100")
+        ).quantize(Decimal("0.01"))
+
+    remaining_periods = max(
+        0,
+        state.total_periods - state.completed_periods,
+    )
+
+    remaining_profit = max(
+        Decimal("0.00"),
+        state.expected_profit - state.accrued_profit,
+    )
+
+    accrual_per_period = Decimal("0.00")
+
+    if remaining_periods > 0:
+        accrual_per_period = (
+            remaining_profit
+            / Decimal(remaining_periods)
         ).quantize(Decimal("0.01"))
 
     return {
         "_id": str(i.id),
         "owner": str(i.owner),
         "amount": float(amount),
-        "profit": float(i.profit),
+        "profit": float(
+            money(i.profit)
+        ),
         "rate": float(rate),
         "name": i.name,
-        "date": i.date.isoformat(),
+
+        "date": (
+            i.date.isoformat()
+            if i.date
+            else None
+        ),
+
         "maturity_date": (
             i.maturity_date.isoformat()
             if i.maturity_date
             else None
         ),
-        "additionalProfit": float(additional_profit),
-        "baseProfit": float(base_profit),
-        "totalProfit": float(total_profit),
-        "effectiveRoi": float(effective_roi),
+
+        # Existing profit fields
+        "additionalProfit": float(
+            money(i.additional_profit)
+        ),
+        "baseProfit": float(
+            state.base_profit
+        ),
+        "totalProfit": float(
+            state.expected_profit
+        ),
+        "effectiveRoi": float(
+            effective_roi
+        ),
+
+        # 6-hour accrual
+        "accruedProfit": float(
+            state.accrued_profit
+        ),
+        "withdrawableProfit": float(
+            state.withdrawable_profit
+        ),
+        "withdrawableAmount": float(
+            state.withdrawable_amount
+        ),
+        "completedAccrualPeriods": (
+            state.completed_periods
+        ),
+        "totalAccrualPeriods": (
+            state.total_periods
+        ),
+        "accrualIntervalHours": 6,
+        "accrualPerPeriod": float(
+            accrual_per_period
+        ),
+        "nextAccrualAt": (
+            state.next_accrual_at.isoformat()
+            if state.next_accrual_at
+            else None
+        ),
+
+        # Existing investment state
         "pausedAt": (
             i.paused_at.isoformat()
             if i.paused_at
             else None
         ),
-        "totalPausedSeconds": i.total_paused_seconds,
+        "totalPausedSeconds": (
+            i.total_paused_seconds
+        ),
         "withdrawaled": i.withdrawaled,
         "status": i.status,
     }
+
 
 
 def serialize_withdrawal(w: Withdrawal):
@@ -308,6 +370,7 @@ async def my_investments(
     }
 
 
+
 @router.post("/claimInvestment/{investment_id}")
 async def claim_investment(
     investment_id: str,
@@ -364,23 +427,25 @@ async def claim_investment(
             "maturityDate": investment.maturity_date.isoformat(),
         }
 
-    principal = money(investment.amount)
-
-    base_profit = (
-        principal
-        * money(investment.rate)
-        / Decimal("100")
+    # Finalize the accrual at maturity.
+    state = settle_accrual(
+        investment,
+        now,
     )
 
-    additional_profit = money(
-        investment.additional_profit
+    principal = money(
+        investment.amount
     )
 
-    profit = (
-        base_profit + additional_profit
-    ).quantize(Decimal("0.01"))
+    profit = money(
+        state.expected_profit
+    )
 
-    total = principal + profit
+    total = (
+        principal + profit
+    ).quantize(
+        Decimal("0.01")
+    )
 
     investment.profit = profit
     investment.withdrawaled = True
@@ -395,9 +460,13 @@ async def claim_investment(
         amount=total,
         type="investment_profit",
         status="completed",
-        details=f"Investment #{investment.id} matured",
+        details=(
+            f"Investment #{investment.id} matured"
+        ),
         date=now,
-        reference=f"investment_profit:{investment.id}",
+        reference=(
+            f"investment_profit:{investment.id}"
+        ),
     )
 
     db.add(transaction)
@@ -407,8 +476,9 @@ async def claim_investment(
         user_id=user.id,
         title="Investment Completed",
         message=(
-            f"Your investment in {investment.name} has matured. "
-            f"You received ${total:.2f}, including "
+            f"Your investment in {investment.name} "
+            f"has matured. You received "
+            f"${total:.2f}, including "
             f"${profit:.2f} profit."
         ),
         notification_type="investment",
@@ -426,6 +496,10 @@ async def claim_investment(
         "profit": float(profit),
         "total": float(total),
     }
+
+
+
+
 
 
 @router.post("/myDeposits")

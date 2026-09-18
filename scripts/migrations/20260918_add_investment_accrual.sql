@@ -1,0 +1,11 @@
+BEGIN;
+
+ALTER TABLE investments
+    ADD COLUMN IF NOT EXISTS accrued_profit
+        NUMERIC(18,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE investments
+    ADD COLUMN IF NOT EXISTS accrued_periods
+        INTEGER NOT NULL DEFAULT 0;
+
+COMMIT;

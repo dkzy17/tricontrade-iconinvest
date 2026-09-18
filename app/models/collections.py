@@ -287,6 +287,20 @@ class Investment(Base):
         nullable=False,
     )
 
+    # Profit accumulated through completed 6-hour periods.
+    accrued_profit: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2),
+        default=0,
+        nullable=False,
+    )
+
+    # Number of completed 6-hour accrual periods.
+    accrued_periods: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
     rate: Mapped[Decimal] = mapped_column(
         Numeric(10, 4),
         default=0,
@@ -332,7 +346,6 @@ class Investment(Base):
         index=True,
         nullable=False,
     )
-
 
 
 class InvestmentAdminAction(Base):
