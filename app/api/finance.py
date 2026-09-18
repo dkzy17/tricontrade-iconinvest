@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import current_user
 from app.api.notifications import create_notification
 from app.core.database import get_db
+from app.core.withdrawal_auth import require_withdrawal_authorization
 from app.core.investment_accrual import (
     preview_accrual,
     settle_accrual,
@@ -19,6 +20,7 @@ from app.models.collections import (
     Deposit,
     Investment,
     Withdrawal,
+    WithdrawalVerification,
     Transaction,
 )
 from app.schemas.finance import (
@@ -553,10 +555,90 @@ async def my_withdrawals(
 @router.post("/withdraw")
 async def withdraw(
     data: WithdrawalIn,
-    user: User = Depends(current_user),
+    authorization: dict = Depends(
+        require_withdrawal_authorization
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     amount = money(data.amount)
+
+    now = datetime.now(timezone.utc)
+
+    try:
+        verification_id = int(
+            authorization["verification_id"]
+        )
+        user_id = int(
+            authorization["user_id"]
+        )
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid withdrawal authorization",
+        )
+
+    # Lock the verification row so the same withdrawal
+    # token cannot be used successfully twice concurrently.
+    verification_result = await db.execute(
+        select(WithdrawalVerification)
+        .where(
+            WithdrawalVerification.id
+            == verification_id,
+            WithdrawalVerification.user_id
+            == user_id,
+        )
+        .with_for_update()
+    )
+
+    verification = (
+        verification_result.scalar_one_or_none()
+    )
+
+    if not verification:
+        raise HTTPException(
+            status_code=401,
+            detail="Withdrawal authorization not found",
+        )
+
+    if verification.status != "used":
+        raise HTTPException(
+            status_code=401,
+            detail="Withdrawal authorization is not valid",
+        )
+
+    if verification.token_used_at is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="Withdrawal authorization has already been used",
+        )
+
+    # Lock the user row too, preventing two simultaneous
+    # withdrawals from spending the same available balance.
+    user_result = await db.execute(
+        select(User)
+        .where(User.id == user_id)
+        .with_for_update()
+    )
+
+    user = user_result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found",
+        )
+
+    if user.suspended:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is suspended",
+        )
+
+    if not user.verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Account must be verified before withdrawing",
+        )
 
     if amount <= 0:
         raise HTTPException(
@@ -569,6 +651,10 @@ async def withdraw(
             "status": "err",
             "msg": "Insufficient balance",
         }
+
+    # Mark the authorization as consumed in the same
+    # database transaction as the withdrawal creation.
+    verification.token_used_at = now
 
     user.balance -= amount
     user.withdraw_balance += amount

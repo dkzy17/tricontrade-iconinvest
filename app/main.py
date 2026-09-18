@@ -14,6 +14,7 @@ from app.api import (
     admin_users,
     admin_investments,
     notifications,
+    withdrawal_verification,
 )
 
 
@@ -90,6 +91,14 @@ app.include_router(
 
 app.include_router(
     admin_investments.router,
+)
+
+app.include_router(
+    withdrawal_verification.admin_router,
+)
+
+app.include_router(
+    withdrawal_verification.router,
 )
 
 app.include_router(
