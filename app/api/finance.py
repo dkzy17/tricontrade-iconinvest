@@ -90,7 +90,12 @@ def serialize_investment(i: Investment):
             money(i.profit)
         ),
         "rate": float(rate),
-        "name": i.name,
+
+        "name": (
+            i.name.strip()
+            if i.name
+            else i.name
+        ),
 
         "date": (
             i.date.isoformat()
@@ -156,7 +161,6 @@ def serialize_investment(i: Investment):
         "withdrawaled": i.withdrawaled,
         "status": i.status,
     }
-
 
 
 def serialize_withdrawal(w: Withdrawal):
