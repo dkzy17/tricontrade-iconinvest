@@ -227,33 +227,74 @@ async def adjust_balance(
     admin=Depends(admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await get_user_or_404(user_id, db)
+    allowed_fields = {
+        "balance": "balance",
+        "investBalance": "invest_balance",
+        "profit": "profit",
+    }
 
-    if body.field == "balance":
-        current = user.balance
-    else:
-        current = user.invest_balance
+    if body.field not in allowed_fields:
+        raise HTTPException(
+            status_code=422,
+            detail="Field must be 'balance', 'investBalance', or 'profit'",
+        )
 
-    new_balance = current + body.delta
+    # Lock the user row so concurrent admin adjustments cannot overwrite
+    # each other's changes.
+    result = await db.execute(
+        select(User)
+        .where(User.id == user_id)
+        .with_for_update()
+    )
 
-    if new_balance < 0:
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found",
+        )
+
+    field_name = allowed_fields[body.field]
+
+    try:
+        delta = Decimal(str(body.delta)).quantize(Decimal("0.01"))
+    except Exception:
+        raise HTTPException(
+            status_code=422,
+            detail="Adjustment amount must be a valid number",
+        )
+
+    if delta == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Adjustment amount cannot be zero",
+        )
+
+    current = Decimal(str(getattr(user, field_name)))
+    new_value = (current + delta).quantize(Decimal("0.01"))
+
+    if new_value < 0:
         raise HTTPException(
             status_code=400,
             detail="Insufficient balance",
         )
 
-    if body.field == "balance":
-        user.balance = new_balance
-    else:
-        user.invest_balance = new_balance
+    setattr(user, field_name, new_value)
 
     await db.commit()
     await db.refresh(user)
 
     return {
         "msg": "Balance updated",
-        "balance": float(new_balance),
+        # Keep the existing response key for frontend compatibility:
+        # this is the newly adjusted value for the selected field.
+        "balance": float(new_value),
         "field": body.field,
+        # Return the complete current wallet snapshot as well.
+        "mainBalance": float(user.balance),
+        "investBalance": float(user.invest_balance),
+        "profit": float(user.profit),
     }
 
 

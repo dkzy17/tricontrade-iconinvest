@@ -29,8 +29,8 @@ class BalanceIn(BaseModel):
     @field_validator("field")
     @classmethod
     def validate_field(cls, value: str) -> str:
-        if value not in {"balance", "investBalance"}:
+        if value not in {"balance", "investBalance", "profit"}:
             raise ValueError(
-                "Field must be balance or investBalance"
+                "Field must be balance, investBalance, or profit"
             )
         return value
