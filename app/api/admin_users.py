@@ -239,8 +239,8 @@ async def adjust_balance(
             detail="Field must be 'balance', 'investBalance', or 'profit'",
         )
 
-    # Lock the user row so concurrent admin adjustments cannot overwrite
-    # each other's changes.
+    # Lock the user row so concurrent admin adjustments/transfers
+    # cannot overwrite each other's changes.
     result = await db.execute(
         select(User)
         .where(User.id == user_id)
@@ -254,8 +254,6 @@ async def adjust_balance(
             status_code=404,
             detail="User not found",
         )
-
-    field_name = allowed_fields[body.field]
 
     try:
         delta = Decimal(str(body.delta)).quantize(Decimal("0.01"))
@@ -271,27 +269,58 @@ async def adjust_balance(
             detail="Adjustment amount cannot be zero",
         )
 
-    current = Decimal(str(getattr(user, field_name)))
-    new_value = (current + delta).quantize(Decimal("0.01"))
+    if body.field == "investBalance":
+        current_main = Decimal(str(user.balance)).quantize(Decimal("0.01"))
+        current_invest = Decimal(str(user.invest_balance)).quantize(Decimal("0.01"))
 
-    if new_value < 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Insufficient balance",
-        )
+        if delta > 0:
+            # Move money from main balance into invested balance.
+            if current_main < delta:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Insufficient main balance",
+                )
 
-    setattr(user, field_name, new_value)
+            user.balance = current_main - delta
+            user.invest_balance = current_invest + delta
+
+        else:
+            # Move money from invested balance back into main balance.
+            amount = abs(delta)
+
+            if current_invest < amount:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Insufficient invested balance",
+                )
+
+            user.invest_balance = current_invest - amount
+            user.balance = current_main + amount
+
+        new_value = Decimal(str(user.invest_balance)).quantize(Decimal("0.01"))
+
+    else:
+        field_name = allowed_fields[body.field]
+        current = Decimal(str(getattr(user, field_name))).quantize(Decimal("0.01"))
+        new_value = (current + delta).quantize(Decimal("0.01"))
+
+        if new_value < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient balance",
+            )
+
+        setattr(user, field_name, new_value)
 
     await db.commit()
     await db.refresh(user)
 
     return {
         "msg": "Balance updated",
-        # Keep the existing response key for frontend compatibility:
-        # this is the newly adjusted value for the selected field.
+        # For investBalance this is the resulting invested balance.
+        # For balance/profit it is the resulting selected field value.
         "balance": float(new_value),
         "field": body.field,
-        # Return the complete current wallet snapshot as well.
         "mainBalance": float(user.balance),
         "investBalance": float(user.invest_balance),
         "profit": float(user.profit),
