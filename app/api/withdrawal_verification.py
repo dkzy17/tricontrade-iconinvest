@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import current_user, admin_user
 from app.api.notifications import create_notification
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.email import render_admin_email, send_admin_email
 from app.core.security import (
@@ -78,7 +79,7 @@ async def issue_withdrawal_token(
             detail="User not found",
         )
 
-    if user.role == "admin":
+    if user.role in {"admin", "superadmin"}:
         raise HTTPException(
             status_code=400,
             detail="Withdrawal authorization is only available for users",
@@ -137,22 +138,22 @@ async def issue_withdrawal_token(
         .strftime("%Y-%m-%d %H:%M UTC")
     )
 
-    subject = "Your TriconTrade Withdrawal Authorization Code"
+    subject = f"Your {settings.company_name} Withdrawal Authorization Code"
 
     body = (
         f"Hello {receiver_name(user)},\n\n"
         "A withdrawal authorization has been issued "
-        "for your TriconTrade account.\n\n"
+        f"for your {settings.company_name} account.\n\n"
         f"Your withdrawal verification code is:\n\n"
         f"{code}\n\n"
         "This code is valid for 15 minutes and can only "
         "be used once.\n\n"
         f"Code expiry: {expires_text}\n\n"
-        "After you verify this code, TriconTrade will "
+        f"After you verify this code, {settings.company_name} will "
         "issue a temporary withdrawal authorization for "
         "your withdrawal request.\n\n"
         "If you did not expect this authorization, "
-        "please contact TriconTrade support."
+        f"please contact {settings.company_name} support."
     )
 
     html = render_admin_email(

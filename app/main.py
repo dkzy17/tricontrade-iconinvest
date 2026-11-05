@@ -11,6 +11,7 @@ from app.api import (
     wallets,
     admin,
     admin_auth,
+    admin_management,
     admin_users,
     admin_investments,
     notifications,
@@ -19,7 +20,7 @@ from app.api import (
 
 
 app = FastAPI(
-    title="Icon Invest API",
+    title=settings.app_name,
     version="2.0.0",
 )
 
@@ -85,6 +86,9 @@ app.include_router(
     tags=["Admin Authentication"],
 )
 
+
+app.include_router(admin_management.router)
+
 app.include_router(
     admin_users.router,
 )
@@ -112,5 +116,5 @@ app.include_router(
 async def health():
     return {
         "status": "ok",
-        "service": "tricontrade-fastapi",
+        "service": settings.service_name,
     }

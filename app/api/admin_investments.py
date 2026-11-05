@@ -11,6 +11,7 @@ from app.core.investment_accrual import (
 )
 
 from app.api.dependencies import admin_user
+from app.core.admin_audit import record_admin_action
 from app.core.database import get_db
 from app.models.collections import (
     Investment,
@@ -310,6 +311,7 @@ async def adjust_investment_roi(
 
     db.add(audit)
 
+    record_admin_action(db, admin, "investment.roi_adjusted", details={"investment_id": investment.id, "adjustment": str(adjustment), "previous_additional_profit": str(current_additional), "new_additional_profit": str(new_additional), "reason": body.reason})
     await db.commit()
     await db.refresh(investment)
 
@@ -376,6 +378,7 @@ async def pause_investment(
 
     db.add(audit)
 
+    record_admin_action(db, admin, "investment.paused", details={"investment_id": investment.id, "reason": body.reason})
     await db.commit()
     await db.refresh(investment)
 
@@ -466,6 +469,7 @@ async def resume_investment(
 
     db.add(audit)
 
+    record_admin_action(db, admin, "investment.resumed", details={"investment_id": investment.id, "paused_seconds": paused_seconds, "reason": body.reason})
     await db.commit()
     await db.refresh(investment)
 

@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import admin_user
+from app.core.admin_audit import record_admin_action
 from app.api.notifications import create_notification
 from app.core.database import get_db
 from app.models.collections import (
@@ -79,7 +80,7 @@ async def users(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(User).order_by(User.join_date.desc())
+        select(User).where(User.role == "user").order_by(User.join_date.desc())
     )
 
     user_records = result.scalars().all()
@@ -265,6 +266,7 @@ async def approve_deposit(
         notification_type="deposit",
     )
 
+    record_admin_action(db, admin, "deposit.approved", target=user, details={"deposit_id": deposit.id, "amount": str(deposit.amount)})
     await db.commit()
     await db.refresh(deposit)
 
@@ -346,6 +348,7 @@ async def reject_deposit(
         notification_type="deposit",
     )
 
+    record_admin_action(db, admin, "deposit.rejected", target=user, details={"deposit_id": deposit.id, "amount": str(deposit.amount)})
     await db.commit()
     await db.refresh(deposit)
 
@@ -461,6 +464,7 @@ async def approve_withdrawal(
         notification_type="withdrawal",
     )
 
+    record_admin_action(db, admin, "withdrawal.approved", target=user, details={"withdrawal_id": withdrawal.id, "amount": str(withdrawal.amount)})
     await db.commit()
     await db.refresh(withdrawal)
 
@@ -545,6 +549,7 @@ async def reject_withdrawal(
         notification_type="withdrawal",
     )
 
+    record_admin_action(db, admin, "withdrawal.rejected", target=user, details={"withdrawal_id": withdrawal.id, "amount": str(withdrawal.amount)})
     await db.commit()
     await db.refresh(withdrawal)
 

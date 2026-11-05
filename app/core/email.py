@@ -1,3 +1,6 @@
+from datetime import datetime, timezone
+from html import escape
+
 import resend
 
 from app.core.config import settings
@@ -10,17 +13,22 @@ async def send_otp_email(
     email: str,
     otp: str,
 ):
+    company_name = settings.company_name
+    safe_company_name = escape(company_name)
+    safe_company_tagline = escape(settings.company_tagline)
+    current_year = datetime.now(timezone.utc).year
+
     params: resend.Emails.SendParams = {
         "from": settings.from_email,
         "to": [email],
-        "subject": "Your TriconTrade Verification Code",
+        "subject": f"Your {company_name} Verification Code",
         "html": f"""
         <!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>TriconTrade Verification</title>
+            <title>{safe_company_name} Verification</title>
         </head>
 
         <body style="
@@ -51,7 +59,7 @@ async def send_otp_email(
                         color:#ffffff;
                         letter-spacing:1px;
                     ">
-                        TriconTrade
+                        {safe_company_name}
                     </div>
 
                     <div style="
@@ -59,7 +67,7 @@ async def send_otp_email(
                         font-size:13px;
                         color:#9ca3af;
                     ">
-                        Secure Trading & Investment
+                        {safe_company_tagline}
                     </div>
                 </div>
 
@@ -80,7 +88,7 @@ async def send_otp_email(
                         color:#4b5563;
                     ">
                         Use the verification code below to confirm your
-                        TriconTrade account.
+                        {safe_company_name} account.
                     </p>
 
                     <div style="
@@ -142,7 +150,7 @@ async def send_otp_email(
                         font-size:12px;
                         color:#9ca3af;
                     ">
-                        © 2026 TriconTrade. All rights reserved.
+                        © {current_year} {safe_company_name}. All rights reserved.
                     </p>
                 </div>
 
@@ -160,8 +168,6 @@ async def send_otp_email(
 
 
 
-from html import escape
-from datetime import datetime, timezone
 
 
 def render_admin_email(
@@ -172,6 +178,12 @@ def render_admin_email(
     cta_url: str | None = None,
 ) -> str:
     current_year = datetime.now(timezone.utc).year
+    safe_company_name = escape(settings.company_name)
+    unsubscribe_target = (
+        settings.unsubscribe_url
+        or f"{settings.app_url.rstrip('/')}/unsubscribe"
+    )
+    safe_unsubscribe_url = escape(unsubscribe_target, quote=True)
 
     safe_receiver_name = escape(receiver_name or "Customer")
     safe_subject = escape(subject)
@@ -285,7 +297,7 @@ def render_admin_email(
                 letter-spacing:-.2px;
                 font-weight:700;
               ">
-                Tricontrade
+                {safe_company_name}
               </span>
             </td>
           </tr>
@@ -336,7 +348,7 @@ def render_admin_email(
               ">
                 Thank you,<br>
                 <span style="font-weight:600;color:#1e1e2d;">
-                  The Tricontrade Team
+                  The {safe_company_name} Team
                 </span>
               </p>
             </td>
@@ -355,7 +367,7 @@ def render_admin_email(
           line-height:1.7;
           margin:0;
         ">
-          &copy; {current_year} Tricontrade. All rights reserved.
+          &copy; {current_year} {safe_company_name}. All rights reserved.
         </p>
 
         <p style="
@@ -364,7 +376,7 @@ def render_admin_email(
           margin:6px 0 0;
         ">
           <a
-            href="https://tricontrade.com/unsubscribe"
+            href="{safe_unsubscribe_url}"
             style="
               color:#b0b0b0;
               text-decoration:underline;

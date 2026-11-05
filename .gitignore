@@ -1,4 +1,14 @@
 .venv/
-.env
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Protect all real environment files while allowing example templates.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Keep local rollback backups out of commits.
+*.before-*
+/.env.test
+.pytest_cache/

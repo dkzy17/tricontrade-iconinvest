@@ -3,6 +3,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import admin_user
+from app.core.admin_audit import record_admin_action
 from app.core.database import get_db
 from app.models.collections import Wallet
 from app.schemas.finance import WalletIn
@@ -130,6 +131,8 @@ async def create_wallet(
 
         db.add(wallet)
 
+    await db.flush()
+    record_admin_action(db, admin, "wallet.saved", details={"wallet_id": wallet.id, "cryptocurrency": wallet.cryptocurrency, "network": wallet.network, "address": wallet.address, "is_active": wallet.is_active})
     await db.commit()
     await db.refresh(wallet)
 
@@ -195,6 +198,7 @@ async def update_wallet(
     wallet.address = data.address
     wallet.is_active = data.isActive
 
+    record_admin_action(db, admin, "wallet.updated", details={"wallet_id": wallet.id, "cryptocurrency": wallet.cryptocurrency, "network": wallet.network, "address": wallet.address, "is_active": wallet.is_active})
     await db.commit()
     await db.refresh(wallet)
 
@@ -234,6 +238,7 @@ async def delete_wallet(
         )
 
     await db.delete(wallet)
+    record_admin_action(db, admin, "wallet.deleted", details={"wallet_id": wallet.id, "cryptocurrency": wallet.cryptocurrency, "network": wallet.network, "address": wallet.address})
     await db.commit()
 
     return {

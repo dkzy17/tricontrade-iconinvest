@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import admin_user
+from app.api.dependencies import admin_user, super_admin_user
+from app.core.admin_audit import record_admin_action
 from app.api.notifications import create_notification
 from app.core.database import get_db
 from app.models.collections import (
@@ -62,7 +63,10 @@ async def get_user_or_404(
     db: AsyncSession,
 ) -> User:
     result = await db.execute(
-        select(User).where(User.id == user_id)
+        select(User).where(
+            User.id == user_id,
+            User.role == "user",
+        )
     )
 
     user = result.scalar_one_or_none()
@@ -159,6 +163,7 @@ async def verify_user(
 
     user.verified = body.verified
 
+    record_admin_action(db, admin, "user.verification_changed", target=user, details={"verified": body.verified})
     await db.commit()
     await db.refresh(user)
 
@@ -185,6 +190,7 @@ async def suspend_user(
 
     user.suspended = body.suspended
 
+    record_admin_action(db, admin, "user.suspension_changed", target=user, details={"suspended": body.suspended})
     await db.commit()
     await db.refresh(user)
 
@@ -198,18 +204,26 @@ async def suspend_user(
 async def change_role(
     user_id: int,
     body: RoleIn,
-    admin=Depends(admin_user),
+    admin=Depends(super_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Legacy endpoint is super-admin-only.
+    # Administrator management is also available through /admin/staff.
     user = await get_user_or_404(user_id, db)
 
-    if user.id == admin.id:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot change your own role",
-        )
-
+    previous_role = user.role
     user.role = body.role
+
+    record_admin_action(
+        db,
+        admin,
+        "user.role_changed",
+        target=user,
+        details={
+            "previous_role": previous_role,
+            "new_role": body.role,
+        },
+    )
 
     await db.commit()
     await db.refresh(user)
@@ -312,6 +326,7 @@ async def adjust_balance(
 
         setattr(user, field_name, new_value)
 
+    record_admin_action(db, admin, "user.balance_adjusted", target=user, details={"field": body.field, "delta": str(body.delta), "balance": str(user.balance), "invest_balance": str(user.invest_balance), "profit": str(user.profit)})
     await db.commit()
     await db.refresh(user)
 
@@ -362,6 +377,7 @@ async def credit_user(
 
     db.add(transaction)
 
+    record_admin_action(db, admin, "user.balance_credited", target=user, details={"field": body.field, "amount": str(body.amount), "reason": body.reason})
     await db.commit()
     await db.refresh(user)
 
@@ -416,6 +432,7 @@ async def debit_user(
 
     db.add(transaction)
 
+    record_admin_action(db, admin, "user.balance_debited", target=user, details={"field": body.field, "amount": str(body.amount), "reason": body.reason})
     await db.commit()
     await db.refresh(user)
 
@@ -532,6 +549,7 @@ async def admin_create_investment(
         notification_type="investment",
     )
 
+    record_admin_action(db, admin, "investment.admin_created", target=user, details={"investment_id": investment.id, "amount": str(amount), "plan": plan.name})
     await db.commit()
     await db.refresh(investment)
     await db.refresh(user)

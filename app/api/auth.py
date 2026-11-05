@@ -191,6 +191,12 @@ async def signin(
             detail="Invalid email or password",
         )
 
+    if user.role != "user":
+        raise HTTPException(
+            status_code=403,
+            detail="Please use the administrator sign-in endpoint",
+        )
+
     if user.suspended:
         raise HTTPException(
             status_code=403,

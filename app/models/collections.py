@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -695,4 +696,58 @@ class Email(Base):
         String(255),
         nullable=True,
         index=True,
+    )
+
+
+class AdminAuditLog(Base):
+    """Append-only record of privileged administrative actions."""
+
+    __tablename__ = "admin_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    actor_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        index=True,
+        nullable=False,
+    )
+
+    actor_email: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    actor_role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    action: Mapped[str] = mapped_column(
+        String(100),
+        index=True,
+        nullable=False,
+    )
+
+    target_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"),
+        index=True,
+        nullable=True,
+    )
+
+    target_email: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    details: Mapped[dict] = mapped_column(
+        JSONB,
+        default=dict,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+        nullable=False,
     )
